@@ -14,7 +14,7 @@ from config import MergeConfig
 from sheet_analyzer import analyze_sheet, describe_region, SheetRegion, SIGNATURE_KEYWORDS, LEGEND_KEYWORDS
 from validator import validate_sheet, validate_all_sheets, ValidationResult
 from cell_utils import (
-    copy_row, copy_column_widths, copy_merged_cells, is_row_empty, should_copy_row
+    copy_row, copy_column_widths, copy_merged_cells, is_row_empty, should_copy_row, is_effective_row
 )
 
 
@@ -201,18 +201,8 @@ class MergeEngine:
                 for src_row in rows_to_copy:
                     if src_row <= header_end and is_first:
                         continue
-                    if not should_copy_row(unit.ws, src_row, max_col):
+                    if not self._is_body_row_valid(unit, src_row, max_col, is_first, is_last):
                         continue
-                    row_text = " ".join(
-                        str(unit.ws.cell(row=src_row, column=col).value).strip()
-                        for col in range(1, max_col + 1)
-                        if unit.ws.cell(row=src_row, column=col).value is not None and str(unit.ws.cell(row=src_row, column=col).value).strip() != ""
-                    )
-                    if not is_first and not is_last:
-                        if any(kw in row_text for kw in SIGNATURE_KEYWORDS) or any(kw in row_text for kw in LEGEND_KEYWORDS):
-                            continue
-                        if row_text == "":
-                            continue
                     row_offset = current_out_row - src_row
                     copy_row(
                         src_ws=unit.ws,
@@ -302,6 +292,23 @@ class MergeEngine:
             target_row_start=1,
             row_offset=0,
         )
+
+    @staticmethod
+    def _is_body_row_valid(unit: SheetUnit, src_row: int, max_col: int, is_first: bool, is_last: bool) -> bool:
+        row_text = " ".join(
+            str(unit.ws.cell(row=src_row, column=col).value).strip()
+            for col in range(1, max_col + 1)
+            if unit.ws.cell(row=src_row, column=col).value is not None and str(unit.ws.cell(row=src_row, column=col).value).strip() != ""
+        )
+        if not row_text:
+            return False
+        if row_text in ("项目：", "日期"):
+            return False
+        if any(kw in row_text for kw in SIGNATURE_KEYWORDS) or any(kw in row_text for kw in LEGEND_KEYWORDS):
+            return False
+        if not is_effective_row(unit.ws, src_row, max_col):
+            return False
+        return True
 
     def _log(self, message: str) -> None:
         """记录日志并打印"""

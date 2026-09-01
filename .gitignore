@@ -1,7 +1,16 @@
+#Vscode
+.vscode/
+.joycode/
+.claude/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+/src/__pycache__/
+# Real data files
+data/raw_xlsx
+data/*.zip
+data/out_xlsx
 
 # C extensions
 *.so

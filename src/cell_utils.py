@@ -136,13 +136,18 @@ def _adjust_formula_in_cell(cell: openpyxl.cell.Cell, row_offset: int) -> None:
         cell.value = original
 
 
-def should_copy_row(ws: Worksheet, row: int, max_col: int) -> bool:
-    """判断一行是否应复制到输出：至少要有B列及之后的有效内容"""
+def is_effective_row(ws: Worksheet, row: int, max_col: int) -> bool:
+    """判断一行是否包含可输出的真实数据：A列单独有值不算"""
     for col in range(2, max_col + 1):
         val = ws.cell(row=row, column=col).value
         if val is not None and str(val).strip() != '':
             return True
     return False
+
+
+def should_copy_row(ws: Worksheet, row: int, max_col: int) -> bool:
+    """判断一行是否应复制到输出：至少要有B列及之后的有效内容"""
+    return is_effective_row(ws, row, max_col)
 
 
 def is_row_empty(ws: Worksheet, row: int, max_col: int) -> bool:
