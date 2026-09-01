@@ -6,7 +6,6 @@
 """
 
 import os
-import sys
 import openpyxl
 from typing import List, Optional
 
@@ -18,11 +17,7 @@ from cell_utils import (
 )
 
 
-# ── 数据结构：单个待合并的Sheet单元 ──
-
 class SheetUnit:
-    """一个待合并的Sheet单元（文件+Sheet的组合）"""
-
     def __init__(self, file_name: str, sheet_name: str,
                  wb: openpyxl.Workbook, ws: openpyxl.worksheet.worksheet.Worksheet):
         self.file_name = file_name
@@ -32,7 +27,6 @@ class SheetUnit:
         self.region: Optional[SheetRegion] = None
 
     def analyze(self, config: MergeConfig) -> None:
-        """分析当前Sheet的结构分区"""
         self.region = analyze_sheet(
             self.ws,
             header_rows=config.header_rows,
@@ -45,20 +39,7 @@ class SheetUnit:
         return self.region is None or self.region.real_max_row == 0
 
 
-# ── 合并引擎 ──
-
 class MergeEngine:
-    """
-    Excel多表合并引擎
-
-    工作流：
-        1. 扫描输入目录，加载所有xlsx文件
-        2. 逐文件逐Sheet分析结构
-        3. 可选：执行数据校验
-        4. 按序合并到输出工作簿
-        5. 保存输出文件
-    """
-
     def __init__(self, config: MergeConfig):
         self.config = config
         self.sheet_units: List[SheetUnit] = []
@@ -66,15 +47,9 @@ class MergeEngine:
         self._log_lines: List[str] = []
         self._col_widths = self._collect_column_widths()
 
-    # ── 第1步：扫描与加载 ──
-
     def scan_files(self) -> List[str]:
-        """扫描输入目录，返回排序后的xlsx文件列表"""
         input_dir = self.config.input_dir
-        files = [
-            f for f in os.listdir(input_dir)
-            if f.endswith('.xlsx') and not f.startswith('~$')
-        ]
+        files = [f for f in os.listdir(input_dir) if f.endswith('.xlsx') and not f.startswith('~$')]
         files.sort()
         if not files:
             self._log("未找到可处理的 .xlsx 文件")
@@ -85,7 +60,6 @@ class MergeEngine:
         return files
 
     def load_sheet_units(self) -> None:
-        """加载所有文件的所有Sheet为SheetUnit列表"""
         files = self.scan_files()
         self.sheet_units = []
 
@@ -109,15 +83,11 @@ class MergeEngine:
 
         non_empty = [u for u in self.sheet_units if not u.is_empty]
         if len(non_empty) < len(self.sheet_units):
-            skipped = len(self.sheet_units) - len(non_empty)
-            self._log(f"跳过 {skipped} 个空Sheet")
+            self._log(f"跳过 {len(self.sheet_units) - len(non_empty)} 个空Sheet")
         self.sheet_units = non_empty
         self._col_widths = self._collect_column_widths()
 
-    # ── 第2步：数据校验 ──
-
     def run_validation(self) -> None:
-        """对所有Sheet的数据体执行校验"""
         if not self.config.validation_rules:
             self._log("未配置校验规则，跳过数据校验")
             return
@@ -147,39 +117,29 @@ class MergeEngine:
         if not self.config.strict_mode:
             report = validate_all_sheets(self.validation_results)
             self._log(report)
-            report_path = os.path.join(
-                os.path.dirname(self.config.output_file), "error_log.txt"
-            )
+            report_path = os.path.join(os.path.dirname(self.config.output_file), "error_log.txt")
             with open(report_path, "w", encoding="utf-8") as f:
                 f.write(report)
             self._log(f"校验报告已保存至: {report_path}")
 
-    # ── 第3步：合并写入 ──
-
     def merge(self) -> None:
-        """执行合并：将所有SheetUnit按序写入输出工作簿"""
         if not self.sheet_units:
             self._log("没有可合并的Sheet，退出")
             return
 
         self._log("开始合并...")
-
         wb_out = openpyxl.Workbook()
         ws_out = wb_out.active
         ws_out.title = self.config.output_sheet_name
 
         current_out_row = 1
         total_units = len(self.sheet_units)
-
         if self.config.copy_column_widths:
             self._apply_column_widths(ws_out)
 
         first_unit = self.sheet_units[0]
         header_end = min(self.config.header_rows, first_unit.region.real_max_row)
-        self._log(
-            f"  复制首表表头 [{first_unit.file_name} → {first_unit.sheet_name}] "
-            f"(第1~{header_end}行原样搬运)"
-        )
+        self._log(f"  复制首表表头 [{first_unit.file_name} → {first_unit.sheet_name}] (第1~{header_end}行原样搬运)")
         self._copy_header_block(first_unit, ws_out, header_end)
         current_out_row = header_end + 1
 
@@ -191,8 +151,7 @@ class MergeEngine:
                 max_col = region.real_max_col
                 self._log(
                     f"  合并 [{unit.file_name} → {unit.sheet_name}] "
-                    f"(第{idx + 1}/{total_units}个, "
-                    f"{'首' if is_first else '末' if is_last else '中'})"
+                    f"(第{idx + 1}/{total_units}个, {'首' if is_first else '末' if is_last else '中'})"
                 )
 
                 rows_to_copy = self._determine_rows(region, is_first, is_last)
@@ -200,14 +159,15 @@ class MergeEngine:
                     rows_to_copy = range(max(header_end + 1, region.body_start), rows_to_copy.stop)
 
                 unit_out_row_start = current_out_row
+                footer_copied = False
 
                 for src_row in rows_to_copy:
                     if src_row <= header_end and is_first:
                         continue
-                    row_info = self._classify_body_row(unit, src_row, max_col)
-                    if row_info is not None:
-                        self._log(row_info)
-                        if not row_info.endswith("[保留]"):
+                    decision = self._classify_body_row(unit, src_row, max_col, is_first, is_last)
+                    if decision is not None:
+                        self._log(decision)
+                        if decision.endswith("[跳过]"):
                             continue
                     if not should_copy_row(unit.ws, src_row, max_col):
                         continue
@@ -221,9 +181,14 @@ class MergeEngine:
                         row_offset=row_offset if self.config.adjust_formulas else 0,
                         adjust_formulas=self.config.adjust_formulas,
                     )
+                    if is_last and src_row >= unit.region.footer_start:
+                        footer_copied = True
                     current_out_row += 1
 
-                if rows_to_copy.start < rows_to_copy.stop:
+                if is_last and not footer_copied and unit.region.footer_start <= unit.region.footer_end:
+                    self._copy_footer_block(unit, ws_out, current_out_row)
+                    current_out_row += unit.region.footer_end - unit.region.footer_start + 1
+                elif rows_to_copy.start < rows_to_copy.stop:
                     src_row_start = rows_to_copy.start
                     src_row_end = rows_to_copy.stop - 1
                     row_offset_for_merge = unit_out_row_start - src_row_start
@@ -242,8 +207,6 @@ class MergeEngine:
         wb_out.save(self.config.output_file)
         self._log(f"合并完成！文件已保存至: {self.config.output_file}")
         self._log(f"输出Sheet: {self.config.output_sheet_name}, 共 {current_out_row - 1} 行")
-
-    # ── 辅助方法 ──
 
     def _collect_column_widths(self) -> dict:
         widths = {}
@@ -291,24 +254,42 @@ class MergeEngine:
                 row_offset=0,
                 adjust_formulas=False,
             )
+        copy_merged_cells(unit.ws, ws_out, src_row_start=1, src_row_end=header_end, target_row_start=1, row_offset=0)
+
+    @staticmethod
+    def _copy_footer_block(unit: SheetUnit, ws_out: openpyxl.worksheet.worksheet.Worksheet, target_start_row: int) -> None:
+        footer_rows = list(range(unit.region.footer_start, unit.region.footer_end + 1))
+        if not footer_rows:
+            return
+        src_start = footer_rows[0]
+        for offset, src_row in enumerate(footer_rows):
+            copy_row(
+                src_ws=unit.ws,
+                src_row=src_row,
+                target_ws=ws_out,
+                target_row=target_start_row + offset,
+                max_col=unit.region.real_max_col,
+                row_offset=0,
+                adjust_formulas=False,
+            )
         copy_merged_cells(
             unit.ws,
             ws_out,
-            src_row_start=1,
-            src_row_end=header_end,
-            target_row_start=1,
-            row_offset=0,
+            src_row_start=src_start,
+            src_row_end=footer_rows[-1],
+            target_row_start=target_start_row,
+            row_offset=target_start_row - src_start,
         )
 
     @staticmethod
-    def _classify_body_row(unit: SheetUnit, src_row: int, max_col: int) -> Optional[str]:
+    def _classify_body_row(unit: SheetUnit, src_row: int, max_col: int, is_first: bool, is_last: bool) -> Optional[str]:
         row_text = " ".join(
             str(unit.ws.cell(row=src_row, column=col).value).strip()
             for col in range(1, max_col + 1)
             if unit.ws.cell(row=src_row, column=col).value is not None and str(unit.ws.cell(row=src_row, column=col).value).strip() != ""
         )
         if not row_text:
-            return f"[语义告警] {unit.file_name} → {unit.sheet_name} 第{src_row}行为空或仅占位 [跳过]"
+            return None
         if row_text in ("项目：", "日期"):
             return f"[语义告警] {unit.file_name} → {unit.sheet_name} 第{src_row}行疑似控制行: {row_text} [跳过]"
         if any(kw in row_text for kw in SIGNATURE_KEYWORDS):
@@ -322,16 +303,13 @@ class MergeEngine:
         return None
 
     def _log(self, message: str) -> None:
-        """记录日志并打印"""
         print(message)
         self._log_lines.append(message)
 
     def get_log(self) -> str:
-        """获取完整日志文本"""
         return "\n".join(self._log_lines)
 
     def execute(self) -> bool:
-        """执行完整合并流程。"""
         try:
             self.config.validate()
             self.load_sheet_units()
