@@ -100,11 +100,13 @@ class MergeEngine:
             for sname in wb.sheetnames:
                 ws = wb[sname]
                 unit = SheetUnit(fname, sname, wb, ws)
-                unit.analyze(self.config)
-                self.sheet_units.append(unit)
-                self._log(describe_region(unit.region, fname, sname))
+                try:
+                    unit.analyze(self.config)
+                    self.sheet_units.append(unit)
+                    self._log(describe_region(unit.region, fname, sname))
+                except Exception as e:
+                    self._log(f"[警告] 跳过异常Sheet分析 [{fname} → {sname}]: {e}")
 
-        # 过滤掉空Sheet
         non_empty = [u for u in self.sheet_units if not u.is_empty]
         if len(non_empty) < len(self.sheet_units):
             skipped = len(self.sheet_units) - len(non_empty)
@@ -124,22 +126,27 @@ class MergeEngine:
         self.validation_results = []
 
         for unit in self.sheet_units:
-            result = validate_sheet(
-                ws=unit.ws,
-                file_name=unit.file_name,
-                sheet_name=unit.sheet_name,
-                body_start=unit.region.body_start,
-                body_end=unit.region.body_end,
-                validation_rules=self.config.validation_rules,
-                strict_mode=self.config.strict_mode,
-            )
-            self.validation_results.append(result)
+            try:
+                result = validate_sheet(
+                    ws=unit.ws,
+                    file_name=unit.file_name,
+                    sheet_name=unit.sheet_name,
+                    body_start=unit.region.body_start,
+                    body_end=unit.region.body_end,
+                    validation_rules=self.config.validation_rules,
+                    strict_mode=self.config.strict_mode,
+                )
+                self.validation_results.append(result)
+                for warn in result.semantic_warnings:
+                    self._log(warn)
+            except Exception as e:
+                self._log(f"[警告] 校验失败 [{unit.file_name} → {unit.sheet_name}]: {e}")
+                if self.config.strict_mode:
+                    raise
 
-        # 日志模式下输出汇总报告
         if not self.config.strict_mode:
             report = validate_all_sheets(self.validation_results)
             self._log(report)
-            # 将报告写入文件
             report_path = os.path.join(
                 os.path.dirname(self.config.output_file), "error_log.txt"
             )
@@ -164,11 +171,9 @@ class MergeEngine:
         current_out_row = 1
         total_units = len(self.sheet_units)
 
-        # 列宽：按所有Sheet的列宽均值，并对常用列强制设置
         if self.config.copy_column_widths:
             self._apply_column_widths(ws_out)
 
-        # 先把首个有效Sheet的表头原样复制到输出，避免重建导致样式/合并/填充丢失
         first_unit = self.sheet_units[0]
         header_end = min(self.config.header_rows, first_unit.region.real_max_row)
         self._log(
@@ -178,14 +183,12 @@ class MergeEngine:
         self._copy_header_block(first_unit, ws_out, header_end)
         current_out_row = header_end + 1
 
-        # 首表正文与表尾仍按后续逻辑处理，但跳过已复制的表头
         for idx, unit in enumerate(self.sheet_units):
             try:
                 is_first = (idx == 0)
                 is_last = (idx == total_units - 1)
                 region = unit.region
                 max_col = region.real_max_col
-
                 self._log(
                     f"  合并 [{unit.file_name} → {unit.sheet_name}] "
                     f"(第{idx + 1}/{total_units}个, "
@@ -201,7 +204,12 @@ class MergeEngine:
                 for src_row in rows_to_copy:
                     if src_row <= header_end and is_first:
                         continue
-                    if not self._is_body_row_valid(unit, src_row, max_col, is_first, is_last):
+                    row_info = self._classify_body_row(unit, src_row, max_col)
+                    if row_info is not None:
+                        self._log(row_info)
+                        if not row_info.endswith("[保留]"):
+                            continue
+                    if not should_copy_row(unit.ws, src_row, max_col):
                         continue
                     row_offset = current_out_row - src_row
                     copy_row(
@@ -230,7 +238,6 @@ class MergeEngine:
                 self._log(f"[警告] 跳过异常Sheet [{unit.file_name} → {unit.sheet_name}]: {e}")
                 continue
 
-        # 保存
         os.makedirs(os.path.dirname(self.config.output_file), exist_ok=True)
         wb_out.save(self.config.output_file)
         self._log(f"合并完成！文件已保存至: {self.config.output_file}")
@@ -294,21 +301,25 @@ class MergeEngine:
         )
 
     @staticmethod
-    def _is_body_row_valid(unit: SheetUnit, src_row: int, max_col: int, is_first: bool, is_last: bool) -> bool:
+    def _classify_body_row(unit: SheetUnit, src_row: int, max_col: int) -> Optional[str]:
         row_text = " ".join(
             str(unit.ws.cell(row=src_row, column=col).value).strip()
             for col in range(1, max_col + 1)
             if unit.ws.cell(row=src_row, column=col).value is not None and str(unit.ws.cell(row=src_row, column=col).value).strip() != ""
         )
         if not row_text:
-            return False
+            return f"[语义告警] {unit.file_name} → {unit.sheet_name} 第{src_row}行为空或仅占位 [跳过]"
         if row_text in ("项目：", "日期"):
-            return False
-        if any(kw in row_text for kw in SIGNATURE_KEYWORDS) or any(kw in row_text for kw in LEGEND_KEYWORDS):
-            return False
+            return f"[语义告警] {unit.file_name} → {unit.sheet_name} 第{src_row}行疑似控制行: {row_text} [跳过]"
+        if any(kw in row_text for kw in SIGNATURE_KEYWORDS):
+            return f"[语义告警] {unit.file_name} → {unit.sheet_name} 第{src_row}行混入表尾签批: {row_text[:120]} [跳过]"
+        if any(kw in row_text for kw in LEGEND_KEYWORDS):
+            return f"[语义告警] {unit.file_name} → {unit.sheet_name} 第{src_row}行混入表尾图例: {row_text[:120]} [跳过]"
         if not is_effective_row(unit.ws, src_row, max_col):
-            return False
-        return True
+            return f"[语义告警] {unit.file_name} → {unit.sheet_name} 第{src_row}行只有序号无实质内容 [跳过]"
+        if len(row_text) <= 4 and any(ch.isdigit() for ch in row_text):
+            return f"[语义告警] {unit.file_name} → {unit.sheet_name} 第{src_row}行疑似只有序号: {row_text} [跳过]"
+        return None
 
     def _log(self, message: str) -> None:
         """记录日志并打印"""
@@ -319,15 +330,8 @@ class MergeEngine:
         """获取完整日志文本"""
         return "\n".join(self._log_lines)
 
-    # ── 完整执行流程 ──
-
     def execute(self) -> bool:
-        """
-        执行完整合并流程。
-
-        返回:
-            True=成功, False=失败
-        """
+        """执行完整合并流程。"""
         try:
             self.config.validate()
             self.load_sheet_units()

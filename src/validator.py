@@ -10,6 +10,8 @@ from typing import Dict, Tuple, Type, List, Optional
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.utils import get_column_letter
 
+from sheet_analyzer import SIGNATURE_KEYWORDS, LEGEND_KEYWORDS
+
 
 @dataclass
 class ValidationError:
@@ -36,6 +38,7 @@ class ValidationResult:
     errors: List[ValidationError] = field(default_factory=list)
     total_rows_checked: int = 0
     total_cells_checked: int = 0
+    semantic_warnings: List[str] = field(default_factory=list)
 
     @property
     def has_errors(self) -> bool:
@@ -51,9 +54,42 @@ class ValidationResult:
             f"校验完成: 共检查 {self.total_rows_checked} 行, {self.total_cells_checked} 个单元格",
             f"发现 {self.error_count} 个异常",
         ]
+        for warn in self.semantic_warnings:
+            lines.append(warn)
         for err in self.errors:
             lines.append(str(err))
         return "\n".join(lines)
+
+
+def _row_text(ws: Worksheet, row: int, max_col: int) -> str:
+    parts = []
+    for col in range(1, max_col + 1):
+        val = ws.cell(row=row, column=col).value
+        if val is not None and str(val).strip() != "":
+            parts.append(str(val).strip())
+    return " ".join(parts)
+
+
+def _is_header_like(text: str) -> bool:
+    return bool(text and ("考勤表" in text or "日期" in text or "周" in text or any(day in text for day in ["周日", "周一", "周二", "周三", "周四", "周五", "周六"])))
+
+
+def _is_footer_like(text: str) -> bool:
+    return bool(text and (any(kw in text for kw in SIGNATURE_KEYWORDS) or any(kw in text for kw in LEGEND_KEYWORDS)))
+
+
+def _is_serial_only(text: str, ws: Worksheet, row: int, max_col: int) -> bool:
+    if not text:
+        return False
+    if len(text) > 4:
+        return False
+    if any(ch.isdigit() for ch in text):
+        for col in range(2, max_col + 1):
+            val = ws.cell(row=row, column=col).value
+            if val is not None and str(val).strip() != "":
+                return False
+        return True
+    return False
 
 
 def validate_cell(value, expected_types: Tuple[Type, ...],
@@ -61,19 +97,7 @@ def validate_cell(value, expected_types: Tuple[Type, ...],
                   row: int, col: int) -> Optional[ValidationError]:
     """
     校验单个单元格的值是否符合期望类型。
-
-    参数:
-        value:          单元格值
-        expected_types: 期望类型元组, 如 (int, float)
-        file_name:      文件名（用于错误定位）
-        sheet_name:     Sheet名（用于错误定位）
-        row:            行号 (1-based)
-        col:            列号 (1-based)
-
-    返回:
-        ValidationError 或 None
     """
-    # 跳过空值和公式
     if value is None:
         return None
     if isinstance(value, str) and value.startswith('='):
@@ -101,28 +125,27 @@ def validate_sheet(ws: Worksheet, file_name: str, sheet_name: str,
                    body_start: int, body_end: int,
                    validation_rules: Dict[int, Tuple[Type, ...]],
                    strict_mode: bool = True) -> ValidationResult:
-    """
-    校验Sheet中数据体的所有单元格。
-
-    参数:
-        ws:              工作表
-        file_name:       文件名
-        sheet_name:      Sheet名
-        body_start:      数据体起始行 (1-based)
-        body_end:        数据体结束行
-        validation_rules: 校验规则 {列号: 期望类型元组}
-        strict_mode:     True=遇错即抛异常; False=收集后继续
-
-    返回:
-        ValidationResult
-    """
+    """校验Sheet中数据体的所有单元格，并做 body 语义扫描。"""
     result = ValidationResult()
 
     if body_start > body_end:
-        return result  # 无数据体可校验
+        return result
+
+    max_col = ws.max_column
 
     for row in range(body_start, body_end + 1):
         result.total_rows_checked += 1
+        text = _row_text(ws, row, max_col)
+        if _is_header_like(text):
+            msg = f"[语义异常] 文件: '{file_name}' | Sheet: '{sheet_name}' | 行 {row} 混入表头内容: {text[:120]}"
+            result.semantic_warnings.append(msg)
+        if _is_footer_like(text):
+            msg = f"[语义异常] 文件: '{file_name}' | Sheet: '{sheet_name}' | 行 {row} 混入表尾内容: {text[:120]}"
+            result.semantic_warnings.append(msg)
+        if _is_serial_only(text, ws, row, max_col):
+            msg = f"[语义异常] 文件: '{file_name}' | Sheet: '{sheet_name}' | 行 {row} 疑似只有序号无实质内容: {text[:120]}"
+            result.semantic_warnings.append(msg)
+
         for col, expected_types in validation_rules.items():
             result.total_cells_checked += 1
             cell_value = ws.cell(row=row, column=col).value
@@ -136,13 +159,11 @@ def validate_sheet(ws: Worksheet, file_name: str, sheet_name: str,
 
 
 def validate_all_sheets(validation_results: List[ValidationResult]) -> str:
-    """
-    汇总所有Sheet的校验结果，生成报告。
-    用于日志模式下一次性输出所有异常。
-    """
+    """汇总所有Sheet的校验结果，生成报告。"""
     total_errors = sum(r.error_count for r in validation_results)
     total_rows = sum(r.total_rows_checked for r in validation_results)
     total_cells = sum(r.total_cells_checked for r in validation_results)
+    total_warnings = sum(len(r.semantic_warnings) for r in validation_results)
 
     lines = [
         "=" * 60,
@@ -151,15 +172,18 @@ def validate_all_sheets(validation_results: List[ValidationResult]) -> str:
         f"总检查行数: {total_rows}",
         f"总检查单元格数: {total_cells}",
         f"总异常数: {total_errors}",
+        f"总语义告警数: {total_warnings}",
         "-" * 60,
     ]
 
     for r in validation_results:
+        for warn in r.semantic_warnings:
+            lines.append(warn)
         if r.has_errors:
             for err in r.errors:
                 lines.append(str(err))
 
-    if total_errors == 0:
+    if total_errors == 0 and total_warnings == 0:
         lines.append("✓ 所有数据校验通过，无异常。")
 
     lines.append("=" * 60)

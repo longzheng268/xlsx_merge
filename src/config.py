@@ -19,7 +19,7 @@ class MergeConfig:
 
     # ── 表头/表尾行数 ──
     header_rows: int = 6         # 表头行数（第1~N行为表头，含列头行，第5-6行为合并的列头）
-    footer_rows: int = 2         # 表尾行数（不再决定表尾实际大小，改为智能检测）
+    footer_rows: int = 5         # 表尾行数（不再决定表尾实际大小，改为智能检测）
 
     # ── 运行模式 ──
     strict_mode: bool = True     # True=严格模式（遇错即停）；False=日志模式（收集全部错误后继续）
