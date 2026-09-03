@@ -17,6 +17,31 @@ from cell_utils import (
 )
 
 
+MERGE_OUTPUT_MARKERS = ("成功合并", "合并状态", "合并结果位置")
+
+
+def _is_merge_output(wb: openpyxl.Workbook) -> bool:
+    """判断一个工作簿是否是本工具的历史合并产物（含“报告/总表”汇总页）。
+
+    若首个 Sheet 的左上角出现“成功合并/合并状态/合并结果位置”等标记，则视为
+    合并产物，避免把上一次的输出文件当成输入再次合并。
+    """
+    if not wb.sheetnames:
+        return False
+    try:
+        ws = wb[wb.sheetnames[0]]
+    except Exception:
+        return False
+    for r in range(1, min(ws.max_row, 10) + 1):
+        for c in range(1, min(ws.max_column, 10) + 1):
+            v = ws.cell(r, c).value
+            if isinstance(v, str):
+                for m in MERGE_OUTPUT_MARKERS:
+                    if m in v:
+                        return True
+    return False
+
+
 class SheetUnit:
     def __init__(self, file_name: str, sheet_name: str,
                  wb: openpyxl.Workbook, ws: openpyxl.worksheet.worksheet.Worksheet):
@@ -49,7 +74,15 @@ class MergeEngine:
 
     def scan_files(self) -> List[str]:
         input_dir = self.config.input_dir
-        files = [f for f in os.listdir(input_dir) if f.endswith('.xlsx') and not f.startswith('~$')]
+        output_name = os.path.basename(self.config.output_file)
+        files = []
+        for f in os.listdir(input_dir):
+            if not f.endswith('.xlsx') or f.startswith('~$'):
+                continue
+            if f == output_name:
+                self._log(f"[跳过] 输出文件本身不作为输入: {f}")
+                continue
+            files.append(f)
         files.sort()
         if not files:
             self._log("未找到可处理的 .xlsx 文件")
@@ -69,6 +102,10 @@ class MergeEngine:
                 wb = openpyxl.load_workbook(fpath, data_only=False)
             except Exception as e:
                 self._log(f"[警告] 无法加载文件 '{fname}': {e}")
+                continue
+
+            if _is_merge_output(wb):
+                self._log(f"[跳过] 检测到历史合并产物（含报告/总表页），不作为输入: {fname}")
                 continue
 
             for sname in wb.sheetnames:

@@ -8,9 +8,10 @@ __pycache__/
 *$py.class
 /src/__pycache__/
 # Real data files
-data/raw_xlsx
+data/raw_xlsx/*.xlsx
 data/*.zip
-data/out_xlsx
+data/out_xlsx/
+data/*.xlsx
 
 # C extensions
 *.so

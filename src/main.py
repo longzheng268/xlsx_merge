@@ -119,10 +119,10 @@ def main() -> int:
     success = engine.execute()
 
     if success:
-        print("\n✓ 合并成功完成！")
+        print("\n[完成] 合并成功！")
         return 0
     else:
-        print("\n✗ 合并失败，请检查日志。")
+        print("\n[失败] 合并失败，请检查日志。")
         return 1
 
 

@@ -184,7 +184,7 @@ def validate_all_sheets(validation_results: List[ValidationResult]) -> str:
                 lines.append(str(err))
 
     if total_errors == 0 and total_warnings == 0:
-        lines.append("✓ 所有数据校验通过，无异常。")
+        lines.append("[通过] 所有数据校验通过，无异常。")
 
     lines.append("=" * 60)
     return "\n".join(lines)
