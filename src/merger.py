@@ -266,11 +266,11 @@ class MergeEngine:
         for col in range(1, max(self._col_widths.keys(), default=0) + 1):
             letter = openpyxl.utils.get_column_letter(col)
             if 1 <= col <= 7:
-                # A-G 固定列宽保持不变
-                ws_out.column_dimensions[letter].width = 7.24
+                # A-G 固定列宽
+                ws_out.column_dimensions[letter].width = self.config.col_width_a_g
             elif ATTENDANCE_COL_START <= col <= attendance_end_col:
-                # 日期列（H 起，实际天数）固定 2.82
-                ws_out.column_dimensions[letter].width = 2.82
+                # 日期列（H 起，实际天数）固定列宽
+                ws_out.column_dimensions[letter].width = self.config.col_width_date
             else:
                 vals = self._col_widths.get(col, [])
                 if vals:

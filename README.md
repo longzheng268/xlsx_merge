@@ -61,6 +61,8 @@ python src/main.py
 - `trim_trailing_empty`：是否剔除末尾空白行
 - `adjust_formulas`：是否翻译公式（把相对行引用替换为 INDIRECT+ROW() 动态绑定，默认开启）
 - `copy_column_widths`：是否复制/计算列宽
+- `col_width_a_g`：A-G 列固定列宽，默认 `7.24`
+- `col_width_date`：日期列固定列宽（H 起，按实际天数），默认 `2.82`
 - `merge_strategy`：合并策略，当前支持 `all_in_one`、`group_by_col_count`
 - `output_sheet_name`：输出 Sheet 名称
 
@@ -94,9 +96,10 @@ python src/main.py
 
 ## 列宽
 
-- A-G 列固定为 `7.24`
-- 日期列（H 起，按表头日号自动识别的实际天数，28/29/30/31 天）固定为 `2.82`
+- A-G 列固定为 `col_width_a_g`（默认 `7.24`）
+- 日期列（H 起，按表头日号自动识别的实际天数，28/29/30/31 天）固定为 `col_width_date`（默认 `3.5`）
 - 其他列按所有 Sheet 同列列宽取均值
+- 以上列宽参数均可在 `src/config.py` 的 `MergeConfig` 中配置
 
 ## 注意事项
 

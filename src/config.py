@@ -32,7 +32,11 @@ class MergeConfig:
     # ── 防乱策略开关 ──
     trim_trailing_empty: bool = True   # 剔除末尾空白行
     adjust_formulas: bool = True     # 公式翻译：相对行引用一律替换为 INDIRECT+ROW() 动态绑定（默认开启）
-    copy_column_widths: bool = True    # 保持第一张表的列宽
+    copy_column_widths: bool = True    # 是否复制/计算列宽
+
+    # ── 列宽参数 ──
+    col_width_a_g: float = 7.24       # A-G 列固定列宽
+    col_width_date: float = 3.5      # 日期列固定列宽（H 起，按实际天数）
 
     # ── 合并策略 ──
     # "all_in_one" = 所有Sheet合到一张表; "group_by_col_count" = 按列数分组合并
