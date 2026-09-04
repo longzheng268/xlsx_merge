@@ -6,6 +6,7 @@
 """
 
 import os
+import re
 import openpyxl
 from typing import List, Optional
 
@@ -19,6 +20,25 @@ from cell_utils import (
 
 
 MERGE_OUTPUT_MARKERS = ("成功合并", "合并状态", "合并结果位置")
+
+# 模板占位符：B/C 列出现形如 "XX"/"XXX"/"XXXXX" 的全 X 串，视为模板无效信息
+_PLACEHOLDER_RE = re.compile(r"[Xx]{2,}")
+
+
+def _is_x_placeholder(value) -> bool:
+    """判断单元格值是否为全 X 的模板占位串（XX/XXX/XXXXX…）。"""
+    if not isinstance(value, str):
+        return False
+    return bool(_PLACEHOLDER_RE.fullmatch(value.strip()))
+
+
+def _is_bg_blank(ws: openpyxl.worksheet.worksheet.Worksheet, row: int) -> bool:
+    """判断 B~G（第2~7列）是否全部空白。"""
+    for col in range(2, 8):
+        val = ws.cell(row=row, column=col).value
+        if val is not None and str(val).strip() != "":
+            return False
+    return True
 
 
 def _is_merge_output(wb: openpyxl.Workbook) -> bool:
@@ -343,6 +363,13 @@ class MergeEngine:
             return f"[语义告警] {unit.file_name} → {unit.sheet_name} 第{src_row}行混入表尾签批: {row_text[:120]} [跳过]"
         if any(kw in row_text for kw in LEGEND_KEYWORDS):
             return f"[语义告警] {unit.file_name} → {unit.sheet_name} 第{src_row}行混入表尾图例: {row_text[:120]} [跳过]"
+        # 规则1：B/C 列为模板占位符（XX/XXX/XXXXX）→ 视为模板无效信息
+        for col in (2, 3):
+            if _is_x_placeholder(unit.ws.cell(row=src_row, column=col).value):
+                return f"[语义告警] {unit.file_name} → {unit.sheet_name} 第{src_row}行B/C列为模板占位符: {row_text[:120]} [跳过]"
+        # 规则2：B~G 全空白，即使 H 起仍有考勤内容，也视为模板无效信息
+        if _is_bg_blank(unit.ws, src_row):
+            return f"[语义告警] {unit.file_name} → {unit.sheet_name} 第{src_row}行B~G全空白仅有考勤区内容: {row_text[:120]} [跳过]"
         if not is_effective_row(unit.ws, src_row, max_col):
             return f"[语义告警] {unit.file_name} → {unit.sheet_name} 第{src_row}行只有序号无实质内容 [跳过]"
         if len(row_text) <= 4 and any(ch.isdigit() for ch in row_text):
