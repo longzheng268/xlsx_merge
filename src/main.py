@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
   python main.py --header-rows 6           指定表头6行
   python main.py --footer-rows 2           指定表尾2行
   python main.py --no-strict               日志模式（收集全部错误）
-  python main.py --formula-adjust          启用公式行偏移修正
+  python main.py --no-formula-adjust        关闭公式翻译（保留原公式的相对行引用）
   python main.py --input ./my_data         指定输入目录
   python main.py --output ./result.xlsx    指定输出文件
         """,
@@ -61,8 +61,8 @@ def parse_args() -> argparse.Namespace:
     # 防乱策略
     parser.add_argument("--no-trim", action="store_true",
                         help="不剔除末尾空白行（默认会剔除）")
-    parser.add_argument("--formula-adjust", action="store_true",
-                        help="启用公式行偏移修正（默认关闭，避免翻译产生无效公式）")
+    parser.add_argument("--no-formula-adjust", action="store_true",
+                        help="关闭公式翻译：保留原公式的相对行引用（默认开启 INDIRECT+ROW() 动态绑定）")
     parser.add_argument("--no-col-width", action="store_true",
                         help="不保持第一张表的列宽（默认会保持）")
 
@@ -90,7 +90,7 @@ def build_config(args: argparse.Namespace) -> MergeConfig:
     config.footer_rows = args.footer_rows
     config.strict_mode = not args.no_strict
     config.trim_trailing_empty = not args.no_trim
-    config.adjust_formulas = args.formula_adjust
+    config.adjust_formulas = not args.no_formula_adjust
     config.copy_column_widths = not args.no_col_width
     config.output_sheet_name = args.sheet_name
 

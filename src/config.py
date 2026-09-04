@@ -4,7 +4,7 @@
 职责单一：仅负责配置的定义与校验，不包含任何业务逻辑。
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Tuple, Type, Optional
 import os
 
@@ -31,7 +31,7 @@ class MergeConfig:
 
     # ── 防乱策略开关 ──
     trim_trailing_empty: bool = True   # 剔除末尾空白行
-    adjust_formulas: bool = False      # 自动修正公式行偏移（默认关闭，避免翻译产生无效公式）
+    adjust_formulas: bool = True     # 公式翻译：相对行引用一律替换为 INDIRECT+ROW() 动态绑定（默认开启）
     copy_column_widths: bool = True    # 保持第一张表的列宽
 
     # ── 合并策略 ──

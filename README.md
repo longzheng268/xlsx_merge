@@ -43,7 +43,7 @@ python src/main.py
 - `--strict`：严格模式（默认）
 - `--no-strict`：日志模式
 - `--no-trim`：不剔除末尾空白行
-- `--formula-adjust`：启用公式行偏移修正
+- `--no-formula-adjust`：关闭公式翻译（默认开启 INDIRECT+ROW() 动态绑定）
 - `--no-col-width`：不保持列宽
 - `--sheet-name`：输出 Sheet 名称
 
@@ -58,7 +58,7 @@ python src/main.py
 - `strict_mode`：是否严格模式
 - `validation_rules`：校验规则 `{列号: 期望类型元组}`
 - `trim_trailing_empty`：是否剔除末尾空白行
-- `adjust_formulas`：是否修正公式行偏移
+- `adjust_formulas`：是否翻译公式（把相对行引用替换为 INDIRECT+ROW() 动态绑定，默认开启）
 - `copy_column_widths`：是否复制/计算列宽
 - `merge_strategy`：合并策略，当前支持 `all_in_one`、`group_by_col_count`
 - `output_sheet_name`：输出 Sheet 名称
@@ -78,6 +78,7 @@ python src/main.py
    - 合并单元格
    - 行高
 5. 表体会做逐行审核和语义校验，遇到明显的表头/表尾/说明行、只有序号无实质内容的行会跳过，并记录日志。
+6. 公式翻译（默认开启）：复制公式时，凡是涉及具体行号的相对引用（如 `H7`、`H7:AL7`）一律替换为 `INDIRECT("H"&ROW())` 之类动态绑定，使其无论落在输出表哪一行、或上方增删行，都自动引用当前所在行的对应列；绝对行引用（如 `$AA$1`）保持不动。可用 `--no-formula-adjust` 关闭。
 
 ## 列宽
 
@@ -96,5 +97,5 @@ python src/main.py
 ```bash
 python src/main.py --input data/raw_xlsx --output data/out_xlsx/merged_result.xlsx
 python src/main.py --no-strict --sheet-name Merged_Result
-python src/main.py --no-col-width --formula-adjust
+python src/main.py --no-col-width --no-formula-adjust
 ```

@@ -5,6 +5,7 @@
 依赖：openpyxl（外部库）
 """
 
+import re
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.utils import get_column_letter
@@ -65,8 +66,8 @@ def copy_row(src_ws: Worksheet, src_row: int,
             except Exception:
                 tgt_cell.comment = src_cell.comment
 
-        if adjust_formulas and row_offset != 0:
-            _adjust_formula_in_cell(tgt_cell, row_offset)
+        if adjust_formulas:
+            _translate_formula_indirect(tgt_cell, src_row)
 
 
 def copy_column_widths(src_ws: Worksheet, target_ws: Worksheet, max_col: int) -> None:
@@ -106,33 +107,71 @@ def copy_merged_cells(src_ws: Worksheet, target_ws: Worksheet,
             target_ws.merge_cells(str(new_range))
 
 
-def _adjust_formula_in_cell(cell: openpyxl.cell.Cell, row_offset: int) -> None:
-    """
-    对单个单元格内的公式进行行偏移修正。
-    使用 openpyxl.formula.translate.Translator 实现精准偏移。
+_CELL_REF_RE = re.compile(r'^(\$?)([A-Z]{1,3})(\$?)(\d+)$')
 
-    注意：对于引用表头行的相对引用（如 H5），翻译后可能指向错误行。
-    建议仅在确认公式不引用固定行时启用此功能。
-    翻译失败或结果无效时，保留原始公式并输出警告。
+
+def _translate_ref(part: str, src_row: int) -> str:
+    """把单个 A1 引用改写成 INDIRECT+ROW() 的动态绑定。
+
+    - 绝对行引用（如 $AA$1）保持不动；
+    - 相对行引用（如 H7）按「源行 = src_row」计算偏移，绑定到当前所在行：
+      H7 在源第7行 → INDIRECT("H"&ROW())；
+      H5 在源第6行 → INDIRECT("H"&(ROW()-1))。
+    非普通 A1 引用（含 ! 或 [ 的外部引用）原样返回。
+    """
+    m = _CELL_REF_RE.match(part)
+    if not m:
+        return part
+    _col_abs, col_letters, row_abs, row_digits = m.groups()
+    if row_abs:
+        return part
+    offset = int(row_digits) - src_row
+    if offset == 0:
+        row_expr = "ROW()"
+    elif offset > 0:
+        row_expr = f"(ROW()+{offset})"
+    else:
+        row_expr = f"(ROW()-{abs(offset)})"
+    return f'INDIRECT("{col_letters}"&{row_expr})'
+
+
+def _translate_ref_token(value: str, src_row: int) -> str:
+    """处理一个引用操作数（单格如 H7，或范围如 H7:AL7）。"""
+    if '!' in value or '[' in value:
+        return value
+    if ':' in value:
+        left, right = value.split(':', 1)
+        return _translate_ref(left, src_row) + ':' + _translate_ref(right, src_row)
+    return _translate_ref(value, src_row)
+
+
+def _translate_formula_indirect(cell: openpyxl.cell.Cell, src_row: int) -> None:
+    """把单元格内所有「带具体行号」的相对引用改写为 INDIRECT+ROW() 动态绑定。
+
+    这样公式无论复制到输出表的哪一行（或上方增删行），都会自动引用当前所在行的
+    对应列（H~AL 等），不再受原文件行号影响；绝对行引用（$A$1 之类）保持原样。
+    解析失败或无需改写时保留原始公式。
     """
     if cell.value is None or not isinstance(cell.value, str) or not cell.value.startswith('='):
         return
-
     original = cell.value
     try:
-        from openpyxl.formula.translate import Translator
-        translator = Translator(original, cell.coordinate)
-        translated = translator.translate(row_offset)
-
-        # 验证翻译结果：必须是非空字符串且以 = 开头
-        if translated and isinstance(translated, str) and translated.startswith('='):
-            cell.value = translated
-        else:
-            print(f"  [公式警告] {cell.coordinate}: 翻译结果无效，保留原公式")
-            cell.value = original
-    except Exception as e:
-        # 翻译失败时保留原始公式，避免数据丢失
-        print(f"  [公式警告] {cell.coordinate}: 翻译异常({type(e).__name__})，保留原公式")
+        from openpyxl.formula import Tokenizer
+        tokens = Tokenizer(original).items
+        parts = []
+        changed = False
+        for tok in tokens:
+            if tok.type == 'OPERAND' and tok.subtype == 'RANGE':
+                new_val = _translate_ref_token(tok.value, src_row)
+                if new_val != tok.value:
+                    changed = True
+                parts.append(new_val)
+            else:
+                parts.append(tok.value)
+        if changed:
+            cell.value = '=' + ''.join(parts)
+    except Exception:
+        # 解析失败时保留原始公式，避免数据丢失
         cell.value = original
 
 
