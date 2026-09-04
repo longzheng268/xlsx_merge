@@ -14,7 +14,7 @@ from sheet_analyzer import analyze_sheet, describe_region, SheetRegion, SIGNATUR
 from validator import validate_sheet, validate_all_sheets, ValidationResult
 from cell_utils import (
     copy_row, copy_column_widths, copy_merged_cells, is_row_empty, should_copy_row, is_effective_row,
-    detect_attendance_day_columns,
+    detect_attendance_day_columns, ATTENDANCE_COL_START,
 )
 
 
@@ -172,11 +172,13 @@ class MergeEngine:
 
         current_out_row = 1
         total_units = len(self.sheet_units)
-        if self.config.copy_column_widths:
-            self._apply_column_widths(ws_out)
-
         first_unit = self.sheet_units[0]
         header_end = min(self.config.header_rows, first_unit.region.real_max_row)
+        # 表头来自首表，按首表表头识别实际天数，日期列宽与填色都以此对齐
+        first_attendance_end_col = detect_attendance_day_columns(first_unit.ws, header_end)
+        if self.config.copy_column_widths:
+            self._apply_column_widths(ws_out, first_attendance_end_col)
+
         self._log(f"  复制首表表头 [{first_unit.file_name} → {first_unit.sheet_name}] (第1~{header_end}行原样搬运)")
         self._copy_header_block(first_unit, ws_out, header_end)
         current_out_row = header_end + 1
@@ -260,10 +262,14 @@ class MergeEngine:
                 widths.setdefault(col, []).append(w)
         return widths
 
-    def _apply_column_widths(self, ws_out: openpyxl.worksheet.worksheet.Worksheet) -> None:
+    def _apply_column_widths(self, ws_out: openpyxl.worksheet.worksheet.Worksheet, attendance_end_col: int) -> None:
         for col in range(1, max(self._col_widths.keys(), default=0) + 1):
             letter = openpyxl.utils.get_column_letter(col)
             if 1 <= col <= 7:
+                # A-G 固定列宽保持不变
+                ws_out.column_dimensions[letter].width = 7.24
+            elif ATTENDANCE_COL_START <= col <= attendance_end_col:
+                # 日期列（H 起，实际天数）固定 2.82
                 ws_out.column_dimensions[letter].width = 2.82
             else:
                 vals = self._col_widths.get(col, [])
