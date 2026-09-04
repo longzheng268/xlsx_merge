@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
   python main.py --header-rows 6           指定表头6行
   python main.py --footer-rows 2           指定表尾2行
   python main.py --no-strict               日志模式（收集全部错误）
-  python main.py --no-formula-adjust        关闭公式翻译（保留原公式的相对行引用）
+  python main.py --no-formula-adjust        关闭 INDIRECT+ROW 动态绑定（改为静态行号平移）
   python main.py --input ./my_data         指定输入目录
   python main.py --output ./result.xlsx    指定输出文件
         """,
@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-trim", action="store_true",
                         help="不剔除末尾空白行（默认会剔除）")
     parser.add_argument("--no-formula-adjust", action="store_true",
-                        help="关闭公式翻译：保留原公式的相对行引用（默认开启 INDIRECT+ROW() 动态绑定）")
+                        help="关闭 INDIRECT+ROW 动态绑定，改为相对行号静态平移（默认开启动态绑定）")
     parser.add_argument("--no-col-width", action="store_true",
                         help="不保持第一张表的列宽（默认会保持）")
 

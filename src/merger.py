@@ -239,7 +239,7 @@ class MergeEngine:
                         target_ws=ws_out,
                         target_row=current_out_row,
                         max_col=max_col,
-                        row_offset=row_offset if self.config.adjust_formulas else 0,
+                        row_offset=row_offset,
                         adjust_formulas=self.config.adjust_formulas,
                         apply_attendance_fill=True,
                         attendance_end_col=attendance_end_col,

@@ -135,6 +135,8 @@ def copy_row(src_ws: Worksheet, src_row: int,
 
         if adjust_formulas:
             _translate_formula_indirect(tgt_cell, src_row)
+        else:
+            _translate_formula_row(tgt_cell, row_offset)
 
 
 def copy_column_widths(src_ws: Worksheet, target_ws: Worksheet, max_col: int) -> None:
@@ -177,15 +179,14 @@ def copy_merged_cells(src_ws: Worksheet, target_ws: Worksheet,
 _CELL_REF_RE = re.compile(r'^(\$?)([A-Z]{1,3})(\$?)(\d+)$')
 
 
-def _translate_ref(part: str, src_row: int) -> str:
-    """把单个 A1 引用改写成 INDIRECT+ROW() 的动态绑定。
+# ── 两种公式处理策略 ──
+# 1) 动态绑定（INDIRECT+ROW()）：相对行引用改写为 INDIRECT("列"&ROW()±偏移)，
+#    公式落到输出表任意一行都会自动引用当前所在行的对应列。
+# 2) 静态行号平移：相对行引用按「目标行-源行」偏移量直接平移行号（H7 → H20）。
 
-    - 绝对行引用（如 $AA$1）保持不动；
-    - 相对行引用（如 H7）按「源行 = src_row」计算偏移，绑定到当前所在行：
-      H7 在源第7行 → INDIRECT("H"&ROW())；
-      H5 在源第6行 → INDIRECT("H"&(ROW()-1))。
-    非普通 A1 引用（含 ! 或 [ 的外部引用）原样返回。
-    """
+
+def _translate_ref_indirect(part: str, src_row: int) -> str:
+    """把单个 A1 引用改写成 INDIRECT+ROW() 的动态绑定（True 模式）。"""
     m = _CELL_REF_RE.match(part)
     if not m:
         return part
@@ -202,23 +203,18 @@ def _translate_ref(part: str, src_row: int) -> str:
     return f'INDIRECT("{col_letters}"&{row_expr})'
 
 
-def _translate_ref_token(value: str, src_row: int) -> str:
-    """处理一个引用操作数（单格如 H7，或范围如 H7:AL7）。"""
+def _translate_ref_token_indirect(value: str, src_row: int) -> str:
+    """处理一个引用操作数（单格或范围），True 模式。"""
     if '!' in value or '[' in value:
         return value
     if ':' in value:
         left, right = value.split(':', 1)
-        return _translate_ref(left, src_row) + ':' + _translate_ref(right, src_row)
-    return _translate_ref(value, src_row)
+        return _translate_ref_indirect(left, src_row) + ':' + _translate_ref_indirect(right, src_row)
+    return _translate_ref_indirect(value, src_row)
 
 
 def _translate_formula_indirect(cell: openpyxl.cell.Cell, src_row: int) -> None:
-    """把单元格内所有「带具体行号」的相对引用改写为 INDIRECT+ROW() 动态绑定。
-
-    这样公式无论复制到输出表的哪一行（或上方增删行），都会自动引用当前所在行的
-    对应列（H~AL 等），不再受原文件行号影响；绝对行引用（$A$1 之类）保持原样。
-    解析失败或无需改写时保留原始公式。
-    """
+    """True 模式：把公式内所有相对行引用改写为 INDIRECT+ROW() 动态绑定。"""
     if cell.value is None or not isinstance(cell.value, str) or not cell.value.startswith('='):
         return
     original = cell.value
@@ -229,7 +225,54 @@ def _translate_formula_indirect(cell: openpyxl.cell.Cell, src_row: int) -> None:
         changed = False
         for tok in tokens:
             if tok.type == 'OPERAND' and tok.subtype == 'RANGE':
-                new_val = _translate_ref_token(tok.value, src_row)
+                new_val = _translate_ref_token_indirect(tok.value, src_row)
+                if new_val != tok.value:
+                    changed = True
+                parts.append(new_val)
+            else:
+                parts.append(tok.value)
+        if changed:
+            cell.value = '=' + ''.join(parts)
+    except Exception:
+        # 解析失败时保留原始公式，避免数据丢失
+        cell.value = original
+
+
+def _translate_ref_row(part: str, row_offset: int) -> str:
+    """把单个 A1 引用中的相对行号按 row_offset 平移（False 模式，静态行号重映射）。"""
+    m = _CELL_REF_RE.match(part)
+    if not m:
+        return part
+    col_abs, col_letters, row_abs, row_digits = m.groups()
+    if row_abs:
+        return part
+    new_row = int(row_digits) + row_offset
+    return f"{col_abs}{col_letters}{new_row}"
+
+
+def _translate_ref_token_row(value: str, row_offset: int) -> str:
+    """处理一个引用操作数（单格或范围），False 模式。"""
+    if '!' in value or '[' in value:
+        return value
+    if ':' in value:
+        left, right = value.split(':', 1)
+        return _translate_ref_row(left, row_offset) + ':' + _translate_ref_row(right, row_offset)
+    return _translate_ref_row(value, row_offset)
+
+
+def _translate_formula_row(cell: openpyxl.cell.Cell, row_offset: int) -> None:
+    """False 模式：把公式内所有相对行引用按 row_offset 静态平移行号。"""
+    if cell.value is None or not isinstance(cell.value, str) or not cell.value.startswith('='):
+        return
+    original = cell.value
+    try:
+        from openpyxl.formula import Tokenizer
+        tokens = Tokenizer(original).items
+        parts = []
+        changed = False
+        for tok in tokens:
+            if tok.type == 'OPERAND' and tok.subtype == 'RANGE':
+                new_val = _translate_ref_token_row(tok.value, row_offset)
                 if new_val != tok.value:
                     changed = True
                 parts.append(new_val)
