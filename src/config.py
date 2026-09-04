@@ -31,7 +31,7 @@ class MergeConfig:
 
     # ── 防乱策略开关 ──
     trim_trailing_empty: bool = True   # 剔除末尾空白行
-    adjust_formulas: bool = True     # 公式处理：True=INDIRECT+ROW() 动态绑定；False=相对行号静态平移
+    adjust_formulas: bool = False     # 公式处理：True=INDIRECT+ROW() 动态绑定；False=相对行号静态平移
     copy_column_widths: bool = True    # 是否复制/计算列宽
 
     # ── 列宽参数 ──
