@@ -9,6 +9,66 @@ import re
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.utils import get_column_letter
+from openpyxl.styles import PatternFill
+
+# 考勤码 → 填充色（H~AL 31 天考勤区域内的对应色）
+# 注意必须精确匹配，避免 "O" 命中 "HO"、"H" 命中 "HO" 这类子串误判。
+ATTENDANCE_CODE_FILLS = {
+    "H": "FFFCD5B4",    # 法定假日 — 浅橙色（杏色）
+    "HO": "FFE26B0A",   # 法定假日加班 — 深橙色
+    "O": "FF8DB4E2",    # 加班 — 浅蓝色
+    "S": "FFCCC0DA",    # 加班转调休 — 淡紫色
+    "L": "FFFFCCCC",    # 休息日 — 浅粉色
+    "W": "FF92D050",    # 事假 — 草绿色
+    "X": "FFFFFF00",    # 旷工 — 亮黄色
+}
+
+# 考勤区域列范围（H=8, AL=38，共 31 天）
+ATTENDANCE_COL_START = 8
+ATTENDANCE_COL_END = 38
+
+# 已创建的填充对象缓存，避免为每个单元格重复构造
+_FILL_CACHE: dict = {}
+
+
+def _get_code_fill(code: str) -> PatternFill:
+    """返回考勤码对应的填充对象（带缓存）。"""
+    if code not in _FILL_CACHE:
+        _FILL_CACHE[code] = PatternFill(
+            fill_type="solid",
+            start_color=ATTENDANCE_CODE_FILLS[code],
+            end_color=ATTENDANCE_CODE_FILLS[code],
+        )
+    return _FILL_CACHE[code]
+
+
+def _apply_attendance_fill(target_cell: openpyxl.cell.Cell, src_value) -> bool:
+    """若单元格值精确命中考勤码，则写入对应填充色；返回是否命中。"""
+    if not isinstance(src_value, str):
+        return False
+    code = src_value.strip()
+    if code in ATTENDANCE_CODE_FILLS:
+        target_cell.fill = _get_code_fill(code)
+        return True
+    return False
+
+
+def detect_attendance_day_columns(ws: Worksheet, header_end: int) -> int:
+    """从表头识别实际考勤天数对应的结束列（H 起，按 1..N 连续日号）。
+
+    有些月份只有 28/29/30 天，天数列未必铺到 AL；这里按表头日号行自动判断，
+    返回实际天数列的结束列号。识别失败时回退到 AL（31 天）。
+    """
+    start = ATTENDANCE_COL_START
+    for r in range(1, header_end + 1):
+        if ws.cell(row=r, column=start).value == 1:
+            c = start
+            while c <= ws.max_column and ws.cell(row=r, column=c).value == (c - start + 1):
+                c += 1
+            end = c - 1
+            if end >= start:
+                return end
+    return ATTENDANCE_COL_END
 
 
 def copy_cell_style(src_cell: openpyxl.cell.Cell, target_cell: openpyxl.cell.Cell) -> None:
@@ -47,9 +107,14 @@ def copy_cell(src_cell: openpyxl.cell.Cell, target_cell: openpyxl.cell.Cell) -> 
 def copy_row(src_ws: Worksheet, src_row: int,
              target_ws: Worksheet, target_row: int,
              max_col: int, row_offset: int = 0,
-             adjust_formulas: bool = False) -> None:
+             adjust_formulas: bool = False,
+             apply_attendance_fill: bool = False,
+             attendance_end_col: int = ATTENDANCE_COL_END) -> None:
     """
     复制整行数据（含样式）从源Sheet到目标Sheet。
+    apply_attendance_fill=True 时，会对 H~attendance_end_col 列中精确命中考勤码的
+    单元格统一写入对应填充色（用于 body 数据行，表头/表尾不启用）。考勤天数不足
+    31 天的月份，attendance_end_col 会小于 AL，从而只填充实际存在的天数列。
     """
     src_height = src_ws.row_dimensions[src_row].height
     if src_height is not None:
@@ -60,6 +125,8 @@ def copy_row(src_ws: Worksheet, src_row: int,
         tgt_cell = target_ws.cell(row=target_row, column=col)
         copy_cell_value(src_cell, tgt_cell)
         copy_cell_style(src_cell, tgt_cell)
+        if apply_attendance_fill and ATTENDANCE_COL_START <= col <= attendance_end_col:
+            _apply_attendance_fill(tgt_cell, src_cell.value)
         if src_cell.comment is not None:
             try:
                 tgt_cell.comment = src_cell.comment.copy()

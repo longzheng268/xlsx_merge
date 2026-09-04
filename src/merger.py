@@ -13,7 +13,8 @@ from config import MergeConfig
 from sheet_analyzer import analyze_sheet, describe_region, SheetRegion, SIGNATURE_KEYWORDS, LEGEND_KEYWORDS
 from validator import validate_sheet, validate_all_sheets, ValidationResult
 from cell_utils import (
-    copy_row, copy_column_widths, copy_merged_cells, is_row_empty, should_copy_row, is_effective_row
+    copy_row, copy_column_widths, copy_merged_cells, is_row_empty, should_copy_row, is_effective_row,
+    detect_attendance_day_columns,
 )
 
 
@@ -197,6 +198,7 @@ class MergeEngine:
 
                 unit_out_row_start = current_out_row
                 footer_copied = False
+                attendance_end_col = detect_attendance_day_columns(unit.ws, unit.region.header_end)
 
                 for src_row in rows_to_copy:
                     if src_row <= header_end and is_first:
@@ -217,6 +219,8 @@ class MergeEngine:
                         max_col=max_col,
                         row_offset=row_offset if self.config.adjust_formulas else 0,
                         adjust_formulas=self.config.adjust_formulas,
+                        apply_attendance_fill=True,
+                        attendance_end_col=attendance_end_col,
                     )
                     if is_last and src_row >= unit.region.footer_start:
                         footer_copied = True
@@ -260,7 +264,7 @@ class MergeEngine:
         for col in range(1, max(self._col_widths.keys(), default=0) + 1):
             letter = openpyxl.utils.get_column_letter(col)
             if 1 <= col <= 7:
-                ws_out.column_dimensions[letter].width = 7.24
+                ws_out.column_dimensions[letter].width = 2.82
             else:
                 vals = self._col_widths.get(col, [])
                 if vals:
